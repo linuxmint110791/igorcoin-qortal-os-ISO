@@ -1,0 +1,53 @@
+name: Assemble and publish ISO
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/assemble-iso.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install zstd
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zstd
+
+      - name: Download and assemble compressed parts
+        env:
+          BASE: https://github.com/linuxmint110791/igor-qortal-os/releases/download/v0.1.1-build.122
+        run: |
+          set -euo pipefail
+          curl -fL "$BASE/igorcoin-qortal-os.iso.zst.part-00" -o part-00
+          curl -fL "$BASE/igorcoin-qortal-os.iso.zst.part-01" -o part-01
+          curl -fL "$BASE/igorcoin-qortal-os.iso.sha256" -o expected.sha256
+          cat part-00 part-01 > image.iso.zst
+          zstd -t image.iso.zst
+          zstd -d image.iso.zst -o igorcoin-qortal-os.iso
+          sed 's#  .*#  igorcoin-qortal-os.iso#' expected.sha256 > expected-normalized.sha256
+          sha256sum -c expected-normalized.sha256
+
+      - name: Check GitHub single-asset size limit
+        run: |
+          size=$(stat -c%s igorcoin-qortal-os.iso)
+          echo "ISO size: $size bytes"
+          if [ "$size" -gt 2147483648 ]; then
+            echo "::error::The ISO exceeds GitHub's 2 GiB per-release-asset limit ($size bytes). It cannot be uploaded as one GitHub release asset."
+            exit 1
+          fi
+
+      - name: Publish ISO as a release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v0.1.1-build.122 igorcoin-qortal-os.iso \
+            --title "IgorCoin-Qortal OS v0.1.1-build.122" \
+            --notes "Single-file ISO assembled from the original verified Zstandard parts." \
+            --repo "${{ github.repository }}" || \
+          gh release upload v0.1.1-build.122 igorcoin-qortal-os.iso --repo "${{ github.repository }}"
